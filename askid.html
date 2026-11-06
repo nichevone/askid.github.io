@@ -1,0 +1,85 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src blob: data:; base-uri 'none'; form-action 'none'">
+<title>ASKID - замена IP ключа на Domain</title>
+<style>body{font:17px system-ui;max-width:850px;margin:24px auto;padding:0 16px;background:#f5f7fa;color:#172033}label{display:block;margin-top:18px}input,textarea,button{box-sizing:border-box;width:100%;font:inherit;padding:12px;margin-top:7px;border:1px solid #aab5c4;border-radius:8px}textarea{height:145px}button{cursor:pointer;background:#fff}button:disabled{opacity:.45;cursor:default}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;padding:12px;max-height:500px;overflow:auto}small{display:block;margin-top:12px}.row{display:flex;gap:8px}canvas{display:block;max-width:100%;height:auto;margin:16px auto}canvas[hidden]{display:none}summary{cursor:pointer;padding:12px 0}.warn{background:#fff1cf;padding:12px}#status{min-height:24px}</style></head><body>
+<h1>ASKID (Amnezia Self-hosted Key IP to Domain)</h1>
+<h2>Замена IP сервера в ключе конфигурации на Domain Name</h2>
+<p>Зачем? Когда IP сервера блокируется, приходится раздавать новые ключи конфигурации. Если использовать доменное имя вместо IP, клиенты будут подключаться к нему. Когда заблокируют IP, нужно будет только поменять IP сервера у хостинг-провайдера. Клиенты начнут автоматически подключаться к нему. Доменное имя неизменно, так что IP может менятся как угодно.</p>
+<p>Это автономная страница. Без внешних библиотек, запросов в сеть и сохранения ключей в хранилище браузера.</p>
+<p class="warn">Предпросмотр JSON, QR и файлы содержат данные доступа к VPN. Не публикуйте их. Страница не создаёт пользователя: сначала выдайте гостевой ключ в Amnezia.</p>
+<label>Старый IP сервера<input id="ip" placeholder="203.0.113.10" autocomplete="off"></label>
+<label>Домен без https://, пути и порта<input id="domain" placeholder="vpn.example.net" autocomplete="off"></label>
+<label>Исходный гостевой ключ<textarea id="src" spellcheck="false" autocomplete="off"></textarea></label>
+<button id="convert">Проверить и преобразовать</button><pre id="status" role="status"></pre>
+<label>Новый ключ<textarea id="dst" readonly spellcheck="false"></textarea></label>
+<label>Имя файла без расширения<input id="filename" placeholder="amnezia-domain" autocomplete="off"></label>
+<div class="row"><button id="copy" disabled>Скопировать</button><button id="file" disabled>Скачать .vpn</button><button id="send" disabled>Отправить .vpn</button></div>
+<small>Кнопка «Отправить» использует системное меню телефона: Telegram, почту, мессенджер или другое приложение. Если браузер или система не поддерживает отправку файлов, будет предложено сохранить файл.</small>
+<details><summary>JSON исходного ключа (содержит секреты)</summary><pre id="before"></pre></details>
+<details><summary>JSON нового ключа (содержит секреты)</summary><pre id="after"></pre><button id="jsonfile" disabled>Скачать JSON для диагностики</button></details>
+<button id="showqr" disabled>Показать QR-код нового ключа</button><p id="qrstatus"></p><canvas id="qr" hidden></canvas><button id="qrfile" disabled>Скачать QR как PNG</button>
+<button id="clear">Очистить ключи и результаты</button>
+<small>Поддерживается классический vpn://: Base64URL, JSON или qCompress. Редактор меняет только известные поля адреса VLESS и совпадающий hostName. Всегда проверяйте отдельный тестовый профиль.</small>
+<script>
+'use strict';const el=id=>document.getElementById(id),MAX=2*1024*1024;let resultJSON='',vpnBlob=null;
+function safeName(){let n=el('filename').value.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g,'-').replace(/^\.+|\.+$/g,'').slice(0,120);return n||'amnezia-domain';}
+function reset(){el('dst').value='';el('before').textContent='';el('after').textContent='';el('status').textContent='';el('qrstatus').textContent='';el('qr').hidden=true;el('qr').width=el('qr').height=0;resultJSON='';vpnBlob=null;for(const id of ['copy','file','send','jsonfile','showqr','qrfile'])el(id).disabled=true;}
+async function streamBytes(bytes,transform){const reader=new Blob([bytes]).stream().pipeThrough(transform).getReader(),chunks=[];let size=0;try{while(true){const r=await reader.read();if(r.done)break;size+=r.value.length;if(size>MAX)throw Error('Результат слишком большой');chunks.push(r.value);}}finally{await reader.cancel().catch(()=>{});}const out=new Uint8Array(size);let pos=0;for(const c of chunks){out.set(c,pos);pos+=c.length;}return out;}
+function decode64(s){if(!/^[A-Za-z0-9_=-]+$/.test(s))throw Error('Неверный Base64URL');s=s.replace(/-/g,'+').replace(/_/g,'/').replace(/=+$/,'');s+='='.repeat((4-s.length%4)%4);return Uint8Array.from(atob(s),c=>c.charCodeAt(0));}
+function encode64(bytes){let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+function readable(node,depth=0){if(depth>60)return '[limit]';if(Array.isArray(node))return node.map(v=>readable(v,depth+1));if(node&&typeof node==='object')return Object.fromEntries(Object.entries(node).map(([k,v])=>[k,readable(v,depth+1)]));if(typeof node==='string'&&/^[\s]*[\[{]/.test(node)){try{return readable(JSON.parse(node),depth+1);}catch{}}return node;}
+function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
+el('convert').onclick=async()=>{reset();el('convert').disabled=true;try{
+ if(!window.CompressionStream||!window.DecompressionStream)throw Error('Нужен браузер с CompressionStream / DecompressionStream');
+ const ip=el('ip').value.trim(),domain=el('domain').value.trim().toLowerCase();if(!ip||/[\s/]/.test(ip))throw Error('Укажите старый IP точно как в ключе');if(domain.length>253||!domain.includes('.')||!domain.split('.').every(s=>/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(s)))throw Error('Укажите домен ASCII/punycode без схемы и порта');
+ const key=el('src').value.trim();if(!key.startsWith('vpn://')||key.length>MAX)throw Error('Нужен ключ vpn:// допустимого размера');const raw=decode64(key.slice(6)),decoder=new TextDecoder('utf-8',{fatal:true});let text;
+ try{text=decoder.decode(raw);JSON.parse(text);}catch{if(raw.length<6)throw Error('Ключ слишком короткий');const expected=new DataView(raw.buffer,raw.byteOffset,raw.byteLength).getUint32(0,false);if(expected>MAX)throw Error('Слишком большой распакованный ключ');const unpacked=await streamBytes(raw.subarray(4),new DecompressionStream('deflate'));if(unpacked.length!==expected)throw Error('Неверная длина qCompress');text=decoder.decode(unpacked);}
+ const root=JSON.parse(text);el('before').textContent=JSON.stringify(readable(root),null,2);const logs=[];let endpoints=0;
+ function walk(node,path,depth=0){if(depth>60)throw Error('Слишком глубокая структура');if(!node||typeof node!=='object')return;if(Array.isArray(node)){node.forEach((v,i)=>walk(v,path+'['+i+']',depth+1));return;}
+ if(node.protocol==='vless'&&node.settings&&Array.isArray(node.settings.vnext))for(let i=0;i<node.settings.vnext.length;i++){const v=node.settings.vnext[i];if(v&&v.address===ip){v.address=domain;endpoints++;logs.push(path+'.settings.vnext['+i+'].address');}}
+ for(const k of Object.keys(node)){const v=node[k],next=path+'.'+k;if(k==='hostName'&&v===ip){node[k]=domain;logs.push(next);continue;}if(typeof v==='string'&&v.trim().startsWith('{')){let parsed;try{parsed=JSON.parse(v);}catch{continue;}const before=logs.length;walk(parsed,next+'(JSON)',depth+1);if(logs.length>before)node[k]=JSON.stringify(parsed);}else if(v&&typeof v==='object')walk(v,next,depth+1);}}
+ walk(root,'$');if(!endpoints)throw Error('Не найден VLESS settings.vnext[].address с указанным IP. Нужен разбор структуры этого формата. Исходный JSON доступен ниже.');
+ resultJSON=JSON.stringify(root,null,2);el('after').textContent=JSON.stringify(readable(root),null,2);const bytes=new TextEncoder().encode(JSON.stringify(root)),compressed=await streamBytes(bytes,new CompressionStream('deflate')),packed=new Uint8Array(4+compressed.length);new DataView(packed.buffer).setUint32(0,bytes.length,false);packed.set(compressed,4);el('dst').value='vpn://'+encode64(packed);vpnBlob=new Blob([el('dst').value],{type:'text/plain;charset=utf-8'});
+ el('status').textContent='Заменены поля:\n'+logs.join('\n')+(JSON.stringify(root).includes(ip)?'\nВнимание: старый IP остаётся в других полях. Проверьте их отдельно.':'')+'\nUUID, SNI и ключи не изменялись. Сначала проверьте тестовый профиль.';for(const id of ['copy','file','send','jsonfile','showqr'])el(id).disabled=false;
+ }catch(e){el('status').textContent='Ошибка: '+e.message;}finally{el('convert').disabled=false;}};
+for(const id of ['src','ip','domain','filename'])el(id).addEventListener('input',reset);
+el('copy').onclick=async()=>{try{await navigator.clipboard.writeText(el('dst').value);}catch{el('dst').focus();el('dst').select();el('status').textContent+='\nВыделен ключ — скопируйте через меню браузера.';}};
+el('file').onclick=()=>download(vpnBlob,safeName()+'.vpn');
+el('send').onclick=async()=>{try{
+ const name=safeName()+'.vpn',file=new File([vpnBlob],name,{type:'text/plain;charset=utf-8'});
+ if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:name,text:'Конфигурация Amnezia'});return;}
+ if(navigator.share){await navigator.share({title:name,text:el('dst').value});return;}
+ throw Error('send-unsupported');
+}catch(e){if(e&&e.name==='AbortError')return;if(e&&e.message==='send-unsupported'){download(vpnBlob,safeName()+'.vpn');el('status').textContent+='\\nОтправка файлов не поддерживается — файл сохранён для пересылки.';return;}el('status').textContent='Ошибка отправки: '+(e.message||e.name);}};
+el('jsonfile').onclick=()=>download(new Blob([resultJSON],{type:'application/json'}),safeName()+'.json');
+el('showqr').onclick=()=>{try{drawQR(el('dst').value);el('qrfile').disabled=false;}catch(e){el('qr').hidden=true;el('qrfile').disabled=true;el('qrstatus').textContent=e.message;}};
+el('qrfile').onclick=()=>el('qr').toBlob(blob=>{if(blob)download(blob,safeName()+'-qr.png');},'image/png');
+el('clear').onclick=()=>{el('src').value='';reset();};
+
+const QRBLOCKS=[[1, 26, 19], [1, 44, 34], [1, 70, 55], [1, 100, 80], [1, 134, 108], [2, 86, 68], [2, 98, 78], [2, 121, 97], [2, 146, 116], [2, 86, 68, 2, 87, 69], [4, 101, 81], [2, 116, 92, 2, 117, 93], [4, 133, 107], [3, 145, 115, 1, 146, 116], [5, 109, 87, 1, 110, 88], [5, 122, 98, 1, 123, 99], [1, 135, 107, 5, 136, 108], [5, 150, 120, 1, 151, 121], [3, 141, 113, 4, 142, 114], [3, 135, 107, 5, 136, 108], [4, 144, 116, 4, 145, 117], [2, 139, 111, 7, 140, 112], [4, 151, 121, 5, 152, 122], [6, 147, 117, 4, 148, 118], [8, 132, 106, 4, 133, 107], [10, 142, 114, 2, 143, 115], [8, 152, 122, 4, 153, 123], [3, 147, 117, 10, 148, 118], [7, 146, 116, 7, 147, 117], [5, 145, 115, 10, 146, 116], [13, 145, 115, 3, 146, 116], [17, 145, 115], [17, 145, 115, 1, 146, 116], [13, 145, 115, 6, 146, 116], [12, 151, 121, 7, 152, 122], [6, 151, 121, 14, 152, 122], [17, 152, 122, 4, 153, 123], [4, 152, 122, 18, 153, 123], [20, 147, 117, 4, 148, 118], [19, 148, 118, 6, 149, 119]], QRPATTERN=[[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50], [6, 30, 54], [6, 32, 58], [6, 34, 62], [6, 26, 46, 66], [6, 26, 48, 70], [6, 26, 50, 74], [6, 30, 54, 78], [6, 30, 56, 82], [6, 30, 58, 86], [6, 34, 62, 90], [6, 28, 50, 72, 94], [6, 26, 50, 74, 98], [6, 30, 54, 78, 102], [6, 28, 54, 80, 106], [6, 32, 58, 84, 110], [6, 30, 58, 86, 114], [6, 34, 62, 90, 118], [6, 26, 50, 74, 98, 122], [6, 30, 54, 78, 102, 126], [6, 26, 52, 78, 104, 130], [6, 30, 56, 82, 108, 134], [6, 34, 60, 86, 112, 138], [6, 30, 58, 86, 114, 142], [6, 34, 62, 90, 118, 146], [6, 30, 54, 78, 102, 126, 150], [6, 24, 50, 76, 102, 128, 154], [6, 28, 54, 80, 106, 132, 158], [6, 32, 58, 84, 110, 136, 162], [6, 26, 54, 82, 110, 138, 166], [6, 30, 58, 86, 114, 142, 170]];
+function makeQR(text){
+ const bytes=new TextEncoder().encode(text);let ver,blocks,cap;
+ for(ver=1;ver<=40;ver++){const row=QRBLOCKS[ver-1];blocks=[];for(let i=0;i<row.length;i+=3)for(let j=0;j<row[i];j++)blocks.push([row[i+1],row[i+2]]);cap=blocks.reduce((s,b)=>s+b[1],0);if(4+(ver<10?8:16)+bytes.length*8<=cap*8)break;}
+ if(ver>40)throw Error('Ключ слишком длинный для одного QR-кода. Используйте файл или текст.');
+ const bits=[];function put(n,k){for(let i=k-1;i>=0;i--)bits.push((n>>>i)&1);}put(4,4);put(bytes.length,ver<10?8:16);for(const b of bytes)put(b,8);for(let i=0,n=Math.min(4,cap*8-bits.length);i<n;i++)bits.push(0);while(bits.length%8)bits.push(0);
+ const data=[];for(let i=0;i<bits.length;i+=8){let b=0;for(let j=0;j<8;j++)b=(b<<1)|bits[i+j];data.push(b);}let pad=0;while(data.length<cap)data.push(pad++%2?17:236);
+ const exp=new Array(512),log=new Array(256);let x=1;for(let i=0;i<255;i++){exp[i]=x;log[x]=i;x<<=1;if(x&256)x^=285;}for(let i=255;i<512;i++)exp[i]=exp[i-255];const mul=(a,b)=>a&&b?exp[log[a]+log[b]]:0;
+ const ds=[],es=[];let off=0;
+ for(const [total,count] of blocks){const d=data.slice(off,off+count);off+=count;ds.push(d);const degree=total-count;let g=[1];for(let i=0;i<degree;i++){const next=new Array(g.length+1).fill(0);for(let j=0;j<g.length;j++){next[j]^=g[j];next[j+1]^=mul(g[j],exp[i]);}g=next;}const rem=d.concat(new Array(degree).fill(0));for(let i=0;i<d.length;i++){const a=rem[i];if(a)for(let j=0;j<g.length;j++)rem[i+j]^=mul(g[j],a);}es.push(rem.slice(-degree));}
+ const code=[];for(let i=0;i<Math.max(...ds.map(a=>a.length));i++)for(const a of ds)if(i<a.length)code.push(a[i]);for(let i=0;i<Math.max(...es.map(a=>a.length));i++)for(const a of es)if(i<a.length)code.push(a[i]);
+ const n=ver*4+17,m=Array.from({length:n},()=>Array(n).fill(null));
+ function finder(r,c){for(let y=-1;y<=7;y++)for(let z=-1;z<=7;z++){if(r+y<0||r+y>=n||c+z<0||c+z>=n)continue;m[r+y][c+z]=(y>=0&&y<=6&&z>=0&&z<=6&&(y===0||y===6||z===0||z===6||(y>=2&&y<=4&&z>=2&&z<=4)));}}
+ finder(0,0);finder(n-7,0);finder(0,n-7);
+ for(const r of QRPATTERN[ver-1])for(const c of QRPATTERN[ver-1]){if(m[r][c]!==null)continue;for(let y=-2;y<=2;y++)for(let z=-2;z<=2;z++)m[r+y][c+z]=(Math.max(Math.abs(y),Math.abs(z))!==1);}
+ for(let i=8;i<n-8;i++){if(m[i][6]===null)m[i][6]=i%2===0;if(m[6][i]===null)m[6][i]=i%2===0;}
+ function bch(value,poly,shift){let d=value<<shift;const degree=n=>31-Math.clz32(n);while(degree(d)>=degree(poly))d^=poly<<(degree(d)-degree(poly));return (value<<shift)|d;}
+ const fmt=bch(8,0x537,10)^0x5412;
+ for(let i=0;i<15;i++){const b=((fmt>>>i)&1)!==0;if(i<6)m[i][8]=b;else if(i<8)m[i+1][8]=b;else m[n-15+i][8]=b;if(i<8)m[8][n-i-1]=b;else if(i<9)m[8][15-i]=b;else m[8][15-i-1]=b;}m[n-8][8]=true;
+ if(ver>=7){const v=bch(ver,0x1f25,12);for(let i=0;i<18;i++){const b=((v>>>i)&1)!==0;m[Math.floor(i/3)][i%3+n-11]=b;m[i%3+n-11][Math.floor(i/3)]=b;}}
+ let row=n-1,inc=-1,index=0;
+ for(let col=n-1;col>0;col-=2){if(col===6)col--;while(true){for(let k=0;k<2;k++){const c=col-k;if(m[row][c]!==null)continue;let b=index<code.length*8?((code[index>>>3]>>>(7-index%8))&1)!==0:false;index++;if((row+c)%2===0)b=!b;m[row][c]=b;}row+=inc;if(row<0||row>=n){row-=inc;inc=-inc;break;}}}
+ return {matrix:m,version:ver};
+}
+function drawQR(text){const {matrix:m,version}=makeQR(text),n=m.length,scale=Math.max(3,Math.floor(720/(n+8))),canvas=el('qr');canvas.width=canvas.height=(n+8)*scale;const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle='#000';m.forEach((r,y)=>r.forEach((b,x)=>{if(b)ctx.fillRect((x+4)*scale,(y+4)*scale,scale,scale);}));canvas.hidden=false;el('qrstatus').textContent='QR нового vpn://-ключа, версия '+version+'. Для сканирования откройте страницу на другом экране.';}
+
+</script></body></html>
