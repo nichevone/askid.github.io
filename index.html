@@ -4,22 +4,22 @@
 <style>body{font:17px system-ui;max-width:850px;margin:24px auto;padding:0 16px;background:#f5f7fa;color:#172033}label{display:block;margin-top:18px}input,textarea,button{box-sizing:border-box;width:100%;font:inherit;padding:12px;margin-top:7px;border:1px solid #aab5c4;border-radius:8px}textarea{height:145px}button{cursor:pointer;background:#fff}button:disabled{opacity:.45;cursor:default}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;padding:12px;max-height:500px;overflow:auto}small{display:block;margin-top:12px}.row{display:flex;gap:8px}canvas{display:block;max-width:100%;height:auto;margin:16px auto}canvas[hidden]{display:none}summary{cursor:pointer;padding:12px 0}.warn{background:#fff1cf;padding:12px}#status{min-height:24px}</style></head><body>
 <h1>ASKID (Amnezia Self-hosted Key IP to Domain)</h1>
 <h2>Замена IP сервера в ключе конфигурации на Domain Name</h2>
-<p>Зачем? Когда IP сервера блокируется, приходится раздавать новые ключи конфигурации. Если использовать доменное имя вместо IP, клиенты будут подключаться к нему. Когда заблокируют IP, нужно будет только поменять IP сервера у хостинг-провайдера. Клиенты начнут автоматически подключаться к нему. Доменное имя неизменно, так что IP может менятся как угодно.</p>
 <p>Это автономная страница. Без внешних библиотек, запросов в сеть и сохранения ключей в хранилище браузера.</p>
+<p>Дополнительная информация на https://github.com/nichevone/askid.github.io</p>
 <p class="warn">Предпросмотр JSON, QR и файлы содержат данные доступа к VPN. Не публикуйте их. Страница не создаёт пользователя: сначала выдайте гостевой ключ в Amnezia.</p>
 <label>Старый IP сервера<input id="ip" placeholder="203.0.113.10" autocomplete="off"></label>
-<label>Домен без https://, пути и порта<input id="domain" placeholder="vpn.example.net" autocomplete="off"></label>
+<label>Домен (без https://, пути и порта)<input id="domain" placeholder="vpn.example.net" autocomplete="off"></label>
 <label>Исходный гостевой ключ<textarea id="src" spellcheck="false" autocomplete="off"></textarea></label>
 <button id="convert">Проверить и преобразовать</button><pre id="status" role="status"></pre>
 <label>Новый ключ<textarea id="dst" readonly spellcheck="false"></textarea></label>
 <label>Имя файла без расширения<input id="filename" placeholder="amnezia-domain" autocomplete="off"></label>
 <div class="row"><button id="copy" disabled>Скопировать</button><button id="file" disabled>Скачать .vpn</button><button id="send" disabled>Отправить .vpn</button></div>
-<small>Кнопка «Отправить» использует системное меню телефона: Telegram, почту, мессенджер или другое приложение. Если браузер или система не поддерживает отправку файлов, будет предложено сохранить файл.</small>
+<small>Кнопка «Отправить» использует системное меню телефона: Telegram, почту, мессенджер или другое приложение. Если браузер или система не поддерживает отправку файлов, он будет сохранен.</small>
 <details><summary>JSON исходного ключа (содержит секреты)</summary><pre id="before"></pre></details>
-<details><summary>JSON нового ключа (содержит секреты)</summary><pre id="after"></pre><button id="jsonfile" disabled>Скачать JSON для диагностики</button></details>
+<details><summary>JSON нового ключа (содержит секреты)</summary><pre id="after"></pre><button id="jsonfile" disabled>Скачать JSON</button></details>
 <button id="showqr" disabled>Показать QR-код нового ключа</button><p id="qrstatus"></p><canvas id="qr" hidden></canvas><button id="qrfile" disabled>Скачать QR как PNG</button>
 <button id="clear">Очистить ключи и результаты</button>
-<small>Поддерживается классический vpn://: Base64URL, JSON или qCompress. Редактор меняет только известные поля адреса VLESS и совпадающий hostName. Всегда проверяйте отдельный тестовый профиль.</small>
+<small>Поддерживается классический vpn://: Base64URL, JSON или qCompress. Редактор меняет только известные поля адреса VLESS и совпадающий hostName.</small>
 <script>
 'use strict';const el=id=>document.getElementById(id),MAX=2*1024*1024;let resultJSON='',vpnBlob=null;
 function safeName(){let n=el('filename').value.trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g,'-').replace(/^\.+|\.+$/g,'').slice(0,120);return n||'amnezia-domain';}
